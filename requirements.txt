@@ -3,3 +3,6 @@ gradio
 huggingface_hub
 torch
 torchaudio
+pytube
+moviepy
+soundfile
