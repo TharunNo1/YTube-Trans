@@ -2,7 +2,7 @@ import os
 os.environ["STREAMLIT_WATCHED_MODULES"] = "[]"  # Prevent torch module watcher crash
 
 from pytubefix import YouTube
-from moviepy import VideoFileClip, AudioFileClip
+from moviepy.editor import VideoFileClip, AudioFileClip
 import torchaudio
 import torch
 import streamlit as st
