@@ -1,75 +1,103 @@
-from pytube import YouTube
-import moviepy.editor as medit
+import os
+os.environ["STREAMLIT_WATCHED_MODULES"] = "[]"  # Prevent torch module watcher crash
+
+from pytubefix import YouTube
+from moviepy import VideoFileClip, AudioFileClip
 import torchaudio
 import torch
-from pathlib import Path
 import streamlit as st
+from lang_list import (
+    LANGUAGE_NAME_TO_CODE,
+    S2ST_TARGET_LANGUAGE_NAMES,
+)
 
+def sanitize_url(url):
+    return url.strip().split("&")[0]
 
-# link of the video to be downloaded
-link="https://www.youtube.com/watch?v=xWOoBJUqlbI"
 
 def download_yt_video(url):
-	try:
-		yt = YouTube(url)
-	except:
-		print("Connection Error")
-		return False
-
-	try:
-		yt.title = "target_clip"
-		yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first().download()
-	except:
-		print("Issue in downloading Youtube video")
-		return False
-	return True
-
-def extract_audio(video_file = "target_clip.mp4"):
-	video = medit.VideoFileClip(video_file)
-	video.audio.write_audiofile("extracted_audio.wav")
+    try:
+        yt = YouTube(url)
+        yt.title = "target_clip"
+        stream = yt.streams.get_highest_resolution()
+        # stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+        stream.download(filename="target_clip.mp4")
+        return True
+    except Exception as e:
+        st.error(f"Error downloading video: {str(e)}")
+        return False
 
 
-def s2st_yt_audio(audio_file = "./extracted_audio.wav"):
-	audio_input, _ = torchaudio.load(audio_file, format="mp3")
-	s2st_model = torch.jit.load("models/unity_on_device.ptl")
+def extract_audio(video_file="target_clip.mp4"):
+    try:
+        video = VideoFileClip(video_file)
+        video.audio.write_audiofile("extracted_audio.wav")
+        return "extracted_audio.wav"
+    except Exception as e:
+        st.error(f"Audio extraction failed: {str(e)}")
+        return None
 
-	with torch.no_grad():
-		text, units, waveform = s2st_model(audio_input, tgt_lang="eng-hin") # S2ST model also returns waveform
 
-	print(text)
-	torchaudio.save(f"result.wav", waveform.unsqueeze(0), sample_rate=16000) # Save output waveform to local file
+def s2st_yt_audio(audio_file="extracted_audio.wav", target_language="English",  source_language="English"):
+    try:
+        audio_input, _ = torchaudio.load(audio_file)
+        s2st_model = torch.jit.load("models/unity_on_device.ptl")  # Ensure this model exists
+        tgt_lang_code = LANGUAGE_NAME_TO_CODE[target_language]
+        src_lang_code = LANGUAGE_NAME_TO_CODE[source_language]
+        with torch.no_grad():
+            text, units, waveform = s2st_model(input=audio_input,tgt_lang=tgt_lang_code)
 
-def combine_video_with_audio(video_file = "target_clip.mp4", audio_file = "result.wav"):
-	video_clip = VideoFileClip(video_file)
-	audio_clip = AudioFileClip(audio_file)
-	translated_clip = video_clip.set_audio(audio_clip)
-	final_clip.write_videofile("translated.mp4")	
+        torchaudio.save("result.wav", waveform.unsqueeze(0), sample_rate=16000)
+        return "result.wav"
+    except Exception as e:
+        st.error(f"S2ST failed: {str(e)}")
+        return None
 
-st.title("YTube Trans")
+
+def combine_video_with_audio(video_file="target_clip.mp4", audio_file="result.wav"):
+    try:
+        video_clip = VideoFileClip(video_file)
+        audio_clip = AudioFileClip(audio_file)
+        final_clip = video_clip.set_audio(audio_clip)
+        final_clip.write_videofile("translated.mp4", codec='libx264', audio_codec='aac')
+        return "translated.mp4"
+    except Exception as e:
+        st.error(f"Combining video failed: {str(e)}")
+        return None
+
+
+# Streamlit UI
+st.set_page_config(page_title="YTube Trans", layout="centered")
+st.title("🎬 YTube Trans")
 st.write("Translate YouTube videos into your desired language!")
 
-youtube_url = st.text_input("Enter YouTube URL:")
+youtube_url = st.text_input("🔗 Enter YouTube URL:")
 
-target_language = st.selectbox("Select Target Language:", ["Select Language", "Spanish", "French", "German"])
+target_language = st.selectbox("🌐 Select Target Language:", ["Select Language", "Hindi", "Spanish", "French", "German"])
 
-if st.button("Translate"):
-    if youtube_url:
-        st.video(youtube_url)
-
-        if target_language != "Select Language":
-            try:
-                if download_yt_video(youtube_url):
-                    print("Downloaded video")
-                    extract_audio()
-                    s2st_yt_audio()
-                    combine_video_with_audio()
-                    st.video("translated.mp4")
-            except Exception as e:
-                st.error(f"An error occurred: {str(e)}")
-        else:
-            st.warning("Please select a target language.")
-    else:
+if st.button("🚀 Translate"):
+    if not youtube_url:
         st.warning("Please enter a valid YouTube URL.")
+    elif target_language == "Select Language":
+        st.warning("Please select a target language.")
+    else:
+        url = sanitize_url(youtube_url)
+        st.info("📥 Downloading video...")
+        if download_yt_video(url):
+            st.success("Video downloaded!")
+            st.info("🎧 Extracting audio...")
+            audio_file = extract_audio()
+            if audio_file:
+                st.success("Audio extracted!")
+                st.info("🧠 Running S2ST model...")
+                translated_audio = s2st_yt_audio(audio_file, target_language)
+                if translated_audio:
+                    st.success("Translation complete!")
+                    st.info("🎞 Combining video with translated audio...")
+                    final_video = combine_video_with_audio(audio_file=translated_audio)
+                    if final_video:
+                        st.success("Translation done!")
+                        st.video(final_video)
 
 # FAQ section
 st.sidebar.title("Frequently Asked Questions (FAQ)")
